@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Pörssisähkö — Tänään & Huomenna</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root { --blue:#003580; --muted:#666; --bg:#fff; --card:#f8f9fb; }
+  body { font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif; margin:20px; background:var(--bg); color:#111; display:flex; justify-content:center; }
+  .wrap { width:100%; max-width:980px; }
+  header { display:flex; align-items:center; gap:16px; margin-bottom:12px; }
+  h1 { margin:0; color:var(--blue); font-size:1.25rem; }
+  .meta { color:var(--muted); font-size:0.9rem; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:12px; }
+  .card { background:#fff; border:1px solid #e6e9ee; padding:14px; border-radius:8px; box-shadow:0 6px 18px rgba(3,24,64,0.03); }
+  table { width:100%; border-collapse:collapse; font-size:0.95rem; }
+  th,td { padding:6px 8px; text-align:left; border-bottom:1px solid #f1f4f8; }
+  th { font-weight:600; color:var(--muted); font-size:0.85rem; }
+  .price { font-weight:700; color:var(--blue); }
+  .avg { margin-top:8px; font-weight:600; color:#222; }
+  .status { margin-top:10px; color:var(--muted); font-size:0.9rem; }
+  .error { color:#b00020; }
+  .small { font-size:0.85rem; color:var(--muted); }
+  @media (max-width:720px){ .grid{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Pörssisähkö — Tänään & Huomenna</h1>
+      <div class="meta small">Hinnat: snt / kWh (sis. ALV). Lähde: porssisahko.net</div>
+    </header>
+
+    <div id="controls" class="small">Päivitetty: <span id="lastUpdated">--:--</span></div>
+
+    <div class="grid" style="margin-top:12px;">
+      <div class="card">
+        <h3 style="margin:0 0 6px 0;">Tänään</h3>
+        <div id="todayContainer"></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 6px 0;">Huomenna</h3>
+        <div id="tomorrowContainer"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px;">
+      <h3 style="margin:0 0 8px 0;">Kaavio — viimeisimmät 48 tuntia</h3>
+      <div style="height:300px;">
+        <canvas id="chart"></canvas>
+      </div>
+    </div>
+
+    <p id="status" class="status">Ladataan...</p>
+  </div>
+
+<script>
+(async function(){
+  const API = 'https://api.porssisahko.net/v2/latest-prices.json'; // source: porssisahko API v2
+  const statusEl = document.getElementById('status');
+  const lastUpdatedEl = document.getElementById('lastUpdated');
+  const tdayCont = document.getElementById('todayContainer');
+  const tmwCont = document.getElementById('tomorrowContainer');
+  const chartEl = document.getElementById('chart').getContext('2d');
+  let chartInstance = null;
+
+  function setStatus(msg, isError=false){
+    statusEl.textContent = msg;
+    statusEl.classList.toggle('error', !!isError);
+  }
+
+  try {
+    setStatus('Haetaan tuntihintoja...');
+
+    const resp = await fetch(API, { cache: 'no-store' });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(()=>'');
+      throw new Error(`Palvelin palautti virheen ${resp.status} ${resp.statusText}. ${txt}`);
+    }
+    const payload = await resp.json();
+
+    // payload.prices kuuluu olla taulukko: jokainen item sisältää startDate,endDate,price (riippuen APIsta)
+    if (!payload || !Array.isArray(payload.prices)) {
+      console.warn('Raw payload:', payload);
+      throw new Error('API palautti odottamatonta dataa (ei prices-taulukkoa).');
+    }
+
+    // Ryhmittele hinnat päivämäärän mukaan käyttäen paikallista aikaa (fi)
+    const prices = payload.prices.slice(); // kopio
+    // Useimmat rajapinnat antavat aikaleimat ISO-muodossa; JS Date ymmärtää ne.
+    const byDate = {};
+    prices.forEach(p => {
+      // salli useita mahdollisia kenttänimiä jos API ei ole täysin samanlainen
+      const startRaw = p.startDate ?? p.start ?? p.start_time ?? p.from;
+      const priceVal = Number(p.price ?? p.value ?? p.price_snt ?? p.price_cent ?? p.price_eur);
+      if (!startRaw) return;
+      const dt = new Date(startRaw);
+      if (isNaN(dt)) return;
+      // Local date string in 'fi-FI' for grouping (year-month-day would be more robust)
+      const ymd = dt.getFullYear() + '-' + String(dt.getMonth()+1).padStart(2,'0') + '-' + String(dt.getDate()).padStart(2,'0');
+      const hourLabel = dt.toLocaleTimeString('fi-FI', {hour:'2-digit', minute:'2-digit'});
+      if (!byDate[ymd]) byDate[ymd] = [];
+      byDate[ymd].push({ dt, label: hourLabel, price: isFinite(priceVal) ? priceVal : null });
+    });
+
+    // Määritä tänään ja huomenna YMD-merkkijonona (selkeä)
+    const now = new Date();
+    // Käytä paikallista päivämäärää (selaimen timezone oletuksena Eurooppa/Helsinki jos käyttäjä siellä)
+    const todayYmd = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+    const tmw = new Date(now.getTime() + 24*60*60*1000);
+    const tomorrowYmd = tmw.getFullYear() + '-' + String(tmw.getMonth()+1).padStart(2,'0') + '-' + String(tmw.getDate()).padStart(2,'0');
+
+    function renderTable(container, dayArr, title){
+      if(!dayArr || dayArr.length===0){
+        container.innerHTML = '<div class="small">Ei saatavilla olevia tuntihintoja tälle päivälle.</div>';
+        return;
+      }
+      // Järjestä aikajärjestykseen
+      dayArr.sort((a,b)=>a.dt - b.dt);
+      let html = '<table><thead><tr><th>Aika</th><th>Hinta (snt/kWh)</th></tr></thead><tbody>';
+      let sum = 0, count = 0;
+      dayArr.forEach(row=>{
+        const priceText = (row.price === null) ? '—' : (row.price.toFixed(2));
+        html += `<tr><td>${row.label}</td><td class="price">${priceText}</td></tr>`;
+        if (isFinite(row.price)){ sum += row.price; count++; }
+      });
+      html += '</tbody></table>';
+      const avg = count ? (sum/count) : null;
+      html += `<div class="avg">Keskiarvo: ${avg ? avg.toFixed(2) + ' snt/kWh' : 'Ei tietoja'}</div>`;
+      container.innerHTML = html;
+    }
+
+    renderTable(tdayCont, byDate[todayYmd], 'Tänään');
+    renderTable(tmwCont, byDate[tomorrowYmd], 'Huomenna');
+
+    // Piirrä kaavio viimeisimmistä 48h — yhdistele date+hour markkereina
+    // Otetaan mukaan kaikkien saatavilla olevien erien mukaan enintään 48 tuntia viimeisimmästä
+    const flat = [];
+    Object.values(byDate).forEach(arr=>arr.forEach(r=>flat.push(r)));
+    flat.sort((a,b)=>a.dt - b.dt);
+    // Rajaa 48 tuntiin alusta
+    const last48 = [];
+    const nowMillis = Date.now();
+    flat.forEach(r=>{
+      if (r.dt.getTime() >= nowMillis - (48*60*60*1000)) last48.push(r);
+    });
+    const labels = last48.map(r => (r.dt.toLocaleDateString('fi-FI', {day:'2-digit', month:'2-digit'}) + ' ' + r.label));
+    const data = last48.map(r => isFinite(r.price) ? r.price : null);
+
+    if (chartInstance) chartInstance.destroy();
+    chartInstance = new Chart(chartEl, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'snt/kWh',
+          data,
+          borderColor: '#003580',
+          backgroundColor: 'rgba(0,53,128,0.08)',
+          tension: 0.12,
+          fill: true,
+          pointRadius: 3
+        }]
+      },
+      options: {
+        responsive:true,
+        maintainAspectRatio:false,
+        scales: {
+          y: { beginAtZero:true }
+        },
+        plugins:{ legend:{display:false} }
+      }
+    });
+
+    lastUpdatedEl.textContent = new Date().toLocaleString('fi-FI', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    setStatus('Valmis.');
+  } catch (err) {
+    console.error(err);
+    // Selvitä onko virhe CORS-tyyppinen (fetch epäonnistui ilman response)
+    if (err.message && err.message.toLowerCase().includes('blocked')) {
+      setStatus('CORS-esto: selain esti pyynnön. Käynnistä sivu paikalliselta dev-palvelimelta tai käytä proxyä.', true);
+    } else {
+      setStatus('Virhe: ' + (err.message || err), true);
+    }
+    document.getElementById('todayContainer').innerHTML = '<div class="small">Ei dataa.</div>';
+    document.getElementById('tomorrowContainer').innerHTML = '<div class="small">Ei dataa.</div>';
+  }
+})();
+</script>
+</body>
+</html>
