@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+    <meta charset="UTF-8">
+    <title>Pörssisähkön hinta</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        h1 { margin-bottom: 10px; }
+        .price-box { padding: 15px; background: #f3f3f3; margin-bottom: 20px; border-radius: 8px; }
+    </style>
+</head>
+<body>
+    <h1>Pörssisähkö – tänään ja huomenna</h1>
+
+    <div class="price-box">
+        <h2>Tämän hetken hinta:</h2>
+        <p id="current"></p>
+    </div>
+
+    <div class="price-box">
+        <h2>Päivän hinnat (tänään):</h2>
+        <div id="today"></div>
+    </div>
+
+    <div class="price-box">
+        <h2>Huomisen hinnat:</h2>
+        <div id="tomorrow"></div>
+    </div>
+
+    <script>
+        async function loadPrices() {
+            const endpoint = "https://api.fingrid.fi/v1/variable/248/events/json";
+            const res = await fetch(endpoint);
+            const data = await res.json();
+
+            // Nykyinen hinta (snt/kWh)
+            const latest = data[data.length - 1];
+            document.getElementById("current").innerText =
+                (latest.value / 100).toFixed(2) + " snt/kWh";
+
+            // Erotellaan tämän päivän ja huomisen hinnat
+            const today = new Date().toISOString().split("T")[0];
+            const tomorrow = new Date(Date.now() + 86400000).toISOString().split("T")[0];
+
+            const todayPrices = data.filter(d => d.start_time.startsWith(today));
+            const tomorrowPrices = data.filter(d => d.start_time.startsWith(tomorrow));
+
+            function renderPrices(prices, elementId) {
+                if (prices.length === 0) {
+                    document.getElementById(elementId).innerText = "Ei vielä saatavilla.";
+                    return;
+                }
+
+                let html = "<ul>";
+                prices.forEach(p => {
+                    const hour = new Date(p.start_time).getHours().toString().padStart(2, "0");
+                    html += `<li>${hour}:00 — ${(p.value / 100).toFixed(2)} snt/kWh</li>`;
+                });
+                html += "</ul>";
+                document.getElementById(elementId).innerHTML = html;
+            }
+
+            renderPrices(todayPrices, "today");
+            renderPrices(tomorrowPrices, "tomorrow");
+        }
+
+        loadPrices();
+    </script>
+</body>
+</html>
