@@ -6,78 +6,17 @@
     <title>Pörssisähkön Hinta</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* FINNISH FLAG PALETTE: Blue: #003580, White: #FFFFFF */
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #FFFFFF;
-            color: #333;
-            margin: 0;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-
-        .container {
-            background: white;
-            max-width: 800px;
-            width: 100%;
-            padding: 25px;
-            border: 2px solid #003580; 
-            border-radius: 4px;
-            text-align: center;
-        }
-
-        h1 { 
-            margin-top: 0;
-            color: #003580;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        p.subtitle { 
-            color: #666; 
-            font-size: 0.9em; 
-            margin-bottom: 25px; 
-            border-bottom: 1px solid #eee;
-            padding-bottom: 15px;
-        }
-
-        .current-price-box {
-            background-color: #003580;
-            color: #FFFFFF;
-            border-radius: 6px;
-            padding: 20px;
-            display: inline-block;
-            margin-bottom: 30px;
-            box-shadow: 0 4px 6px rgba(0, 53, 128, 0.2);
-        }
-
-        .price-value {
-            font-size: 3em;
-            font-weight: bold;
-            margin: 10px 0;
-        }
-
-        .price-unit { font-size: 1.2em; opacity: 0.9; }
-        .loading { font-style: italic; color: #888; }
-        
-        .chart-container {
-            position: relative; 
-            height: 400px; 
-            width: 100%;
-        }
-
-        .footer-info {
-            margin-top: 20px;
-            font-size: 0.8em;
-            color: #999;
-        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:#fff; color:#333; margin:0; padding:20px; display:flex; justify-content:center; }
+        .container { max-width:800px; width:100%; padding:25px; border:2px solid #003580; border-radius:6px; text-align:center; background:#fff; }
+        h1 { color:#003580; margin:0 0 8px 0; text-transform:uppercase; }
+        .current-price-box { background:#003580; color:#fff; padding:18px; border-radius:8px; display:inline-block; margin-bottom:18px; }
+        .price-value { font-size:2.5rem; font-weight:700; }
+        .chart-container { position:relative; height:400px; width:100%; margin-top:12px; }
+        .loading { font-style:italic; color:#888; }
+        .footer-info { margin-top:14px; font-size:0.85rem; color:#666; }
     </style>
 </head>
 <body>
-
 <div class="container">
     <h1>Pörssisähkö</h1>
     <p class="subtitle">Hinnat sisältävät ALV:n (Prices incl. VAT)</p>
@@ -91,146 +30,63 @@
     <div class="chart-container">
         <canvas id="priceChart"></canvas>
     </div>
-    
+
     <p id="statusMessage" class="loading">Ladataan...</p>
-    
-    <div class="footer-info">
-        Päivitetty: <span id="lastUpdated">--:--</span>
-    </div>
+
+    <div class="footer-info">Päivitetty: <span id="lastUpdated">--:--</span></div>
 </div>
 
 <script>
-    // Variable to store the chart instance so we can destroy it before redrawing
-    let priceChartInstance = null;
+let priceChartInstance = null;
 
-    async function fetchPrices() {
-        const statusMsg = document.getElementById('statusMessage');
-        const lastUpdatedEl = document.getElementById('lastUpdated');
-        
-        try {
-            // 1. Get Data
-            const response = await fetch('https://api.porssisahko.net/v2/latest-prices.json');
-            if (!response.ok) throw new Error("Verkkovirhe");
-            
-            const data = await response.json();
-            const prices = data.prices;
-            prices.reverse(); // Newest last
+async function fetchPrices() {
+    const statusMsg = document.getElementById('statusMessage');
+    const lastUpdatedEl = document.getElementById('lastUpdated');
+    statusMsg.style.color = '#888';
+    statusMsg.innerText = 'Ladataan...';
+    statusMsg.style.display = 'block';
 
-            // 2. Prepare Data
-            const labels = [];
-            const dataPoints = [];
-            let currentPrice = null;
-            const now = new Date();
+    try {
+        const url = 'https://api.porssisahko.net/v2/latest-prices.json';
+        console.log('Hakemassa:', url);
 
-            prices.forEach(entry => {
-                const date = new Date(entry.startDate);
-                
-                // Show data from 2 hours ago onwards
-                if (date.getTime() > now.getTime() - (2 * 60 * 60 * 1000)) {
-                    const dayName = date.toLocaleDateString('fi-FI', { weekday: 'short' });
-                    const time = date.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
-                    labels.push(`${dayName} ${time}`);
-                    dataPoints.push(entry.price);
-                }
-
-                const endDate = new Date(entry.endDate);
-                if (now >= date && now < endDate) {
-                    currentPrice = entry.price;
-                }
-            });
-
-            // 3. Update UI Text
-            if (currentPrice !== null) {
-                document.getElementById('currentPrice').innerText = currentPrice.toFixed(2);
-            } else {
-                document.getElementById('currentPrice').innerText = "Ei tietoa";
-            }
-            
-            statusMsg.style.display = 'none';
-            
-            // Update timestamp
-            const updateTime = new Date();
-            lastUpdatedEl.innerText = updateTime.toLocaleTimeString('fi-FI', { hour: '2-digit', minute: '2-digit' });
-
-            // 4. Draw Chart
-            drawChart(labels, dataPoints);
-
-        } catch (error) {
-            console.error(error);
-            statusMsg.innerText = "Virhe ladattaessa tietoja. Yritetään uudelleen...";
-            statusMsg.style.display = 'block';
-            statusMsg.style.color = "red";
-        }
-    }
-
-    function drawChart(labels, data) {
-        const ctx = document.getElementById('priceChart').getContext('2d');
-        const finnishBlue = '#003580';
-        const finnishWhite = '#FFFFFF';
-
-        // IMPORTANT: Destroy the old chart before creating a new one
-        // otherwise, the old chart stays in the background and causes glitches.
-        if (priceChartInstance) {
-            priceChartInstance.destroy();
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) {
+            // Lue myös response-teksti debugia varten
+            const txt = await response.text();
+            throw new Error(`HTTP ${response.status} - ${response.statusText}\nVastaus: ${txt}`);
         }
 
-        priceChartInstance = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Hinta (snt/kWh)',
-                    data: data,
-                    borderColor: finnishBlue,
-                    backgroundColor: 'rgba(0, 53, 128, 0.1)',
-                    borderWidth: 3,
-                    fill: true,
-                    tension: 0.1, 
-                    pointBackgroundColor: finnishWhite,
-                    pointBorderColor: finnishBlue,
-                    pointBorderWidth: 2,
-                    pointRadius: 4
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: false, // Disable animation for updates so it doesn't "jump" every 15 mins
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        ticks: { color: finnishBlue }
-                    },
-                    x: {
-                        grid: { display: false },
-                        ticks: { color: '#333' }
-                    }
-                },
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        backgroundColor: finnishBlue,
-                        titleColor: finnishWhite,
-                        bodyColor: finnishWhite,
-                        displayColors: false,
-                        callbacks: {
-                            label: function(context) {
-                                return context.parsed.y + ' snt/kWh';
-                            }
-                        }
-                    }
-                }
-            }
-        });
-    }
+        // yritä parsia JSON
+        const data = await response.json();
+        console.log('API raw data:', data);
 
-    // Run immediately when opened
-    fetchPrices();
+        // varmista, että data.prices on olemassa ja on taulukko
+        if (!data || !Array.isArray(data.prices)) {
+            throw new Error('JSON ei sisällä odotettua "prices"-taulukkoa. Katso konsolista raw data.');
+        }
 
-    // Set interval to run every 15 minutes (15 * 60 * 1000 milliseconds)
-    setInterval(fetchPrices, 15 * 60 * 1000);
+        let prices = data.prices.slice(); // kopio
+        // Jos API antaa uusimman ensin, voi kääntää. Ota pois kommentti tarvittaessa:
+        // prices.reverse();
 
-</script>
+        // Prepare structs
+        const labels = [];
+        const dataPoints = [];
+        let currentPrice = null;
+        const now = new Date();
 
-</body>
-</html>
+        // Suodatus: oletuksena viimeiset 24 tuntia (helpompi testata),
+        // voit muuttaa 24 -> 2 jos haluat vain 2 tunnin dataa.
+        const lookbackMillis = 24 * 60 * 60 * 1000; // 24 tuntia
+        // const lookbackMillis = 2 * 60 * 60 * 1000; // 2 tuntia (palauta tarvittaessa)
+
+        prices.forEach(entry => {
+            // Tulostetaan entry konsoliin, jotta näkee avaimet
+            // console.log(entry);
+
+            // Tiedoston kenttänimet voivat olla esim. startDate / endDate / price tai jotain muuta.
+            // Yritetään hakea kentät usealla mahdollisella nimellä:
+            const startRaw = entry.startDate ?? entry.start ?? entry.start_time ?? entry.from;
+            const endRaw =
+
